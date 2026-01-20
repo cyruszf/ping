@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+import ctypes
 
 from Config import CONFIG_FILE, DEFAULT_CONFIG
 from FlashOverlay import FlashOverlay
@@ -19,25 +20,49 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-FIXED_IMAGE_NAME = "sheen.png"
+OVERLAY_IMAGE = "sheen.png"
+WINDOW_ICON   = "sheen.ico"
 
 class App(ctk.CTk):
     def __init__(self):
+        try:
+            # v1.3: New ID for fresh cache
+            myappid = 'pingtool.overlay.game.release.v1.3' 
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
+
         super().__init__()
-        self.title("Spellblade Companion App")
+        self.title("Ping Overlay Tool")
         self.geometry("400x550") 
         self.resizable(False, False)
+
+        try:
+            ico_path = resource_path(WINDOW_ICON)
+            if os.path.exists(ico_path):
+                self.iconbitmap(True, ico_path)
+            
+            png_path = resource_path(OVERLAY_IMAGE)
+            if os.path.exists(png_path):
+                icon_img = tk.PhotoImage(file=png_path)
+                self.iconphoto(True, icon_img)
+        except Exception as e:
+            print(f"Icon Error: {e}")
 
         self.config = self.load_config()
         self.is_running = False
         self.ping_timer = None
-        self.last_update = 0 # For throttling the slider
+        
+        # NEW: A simplified lock for the background thread
+        self.input_locked = False 
+        
+        self.last_update = 0 
         
         if "icon_scale" not in self.config:
-            self.config["icon_scale"] = 1.0
+            self.config["icon_scale"] = 3.0
 
         # --- UI LAYOUT ---
-        ctk.CTkLabel(self, text="Settings", font=("Roboto", 20, "bold")).pack(pady=20)
+        ctk.CTkLabel(self, text="Ping Tool Settings", font=("Roboto", 20, "bold")).pack(pady=20)
 
         # 1. Trigger Keys
         frame_keys = ctk.CTkFrame(self)
@@ -73,10 +98,10 @@ class App(ctk.CTk):
         frame_size.pack(pady=10, fill="x", padx=20)
         ctk.CTkLabel(frame_size, text="Icon Size:").pack(pady=5)
         
-        self.slider_size = ctk.CTkSlider(frame_size, from_=0.2, to=3.0, command=self.update_size_realtime)
+        self.slider_size = ctk.CTkSlider(frame_size, from_=0.1, to=3.0, command=self.update_size_realtime)
         self.slider_size.set(self.config["icon_scale"])
         self.slider_size.pack(fill="x", padx=20, pady=5)
-        self.lbl_size_val = ctk.CTkLabel(frame_size, text=f"{int(self.config['icon_scale']*100)}%")
+        self.lbl_size_val = ctk.CTkLabel(frame_size, text=f"{int( (self.config['icon_scale']/3.0)*100 )}%")
         self.lbl_size_val.pack(pady=2)
 
         # 4. Position Picker
@@ -118,27 +143,26 @@ class App(ctk.CTk):
         if self.overlay and self.overlay.root:
             self.overlay.root.destroy()
         
-        img_path = resource_path(FIXED_IMAGE_NAME)
-        scale = self.config.get("icon_scale", 1.0)
+        img_path = resource_path(OVERLAY_IMAGE)
+        slider_val = self.config.get("icon_scale", 3.0)
+        effective_scale = slider_val / 3.0
         
-        self.overlay = FlashOverlay(img_path, scale)
+        self.overlay = FlashOverlay(img_path, effective_scale)
         self.overlay.move_to(self.config["pos_x"], self.config["pos_y"])
         self.overlay.set_opacity(1.0)
 
     def update_size_realtime(self, value):
-        # 1. Update text label (always feel responsive)
-        self.lbl_size_val.configure(text=f"{int(value*100)}%")
+        percentage = int((value / 3.0) * 100)
+        self.lbl_size_val.configure(text=f"{percentage}%")
         self.config["icon_scale"] = value
-
-        # 2. THROTTLE: Only redraw the window max 30 times a second
+        
         current_time = time.time()
-        if current_time - self.last_update < 0.033: # 33ms = ~30fps
+        if current_time - self.last_update < 0.033: 
             return
         self.last_update = current_time
 
-        # 3. Fast resize
         if self.overlay:
-            self.overlay.resize_graphic(value)
+            self.overlay.resize_graphic(value / 3.0)
             self.overlay.move_to(self.config["pos_x"], self.config["pos_y"])
 
     def select_sound(self):
@@ -184,9 +208,12 @@ class App(ctk.CTk):
             for entry in self.key_entries:
                 entry.configure(state="normal")
             keyboard.unhook_all()
+            # Restore visibility if stopped during cooldown
             if self.overlay: self.overlay.set_opacity(1.0)
+            self.input_locked = False
 
     def perform_ping(self):
+        # 1. Play Sound
         if self.config["sound_file"] and os.path.exists(self.config["sound_file"]):
             try:
                 sound = pygame.mixer.Sound(self.config["sound_file"])
@@ -194,30 +221,47 @@ class App(ctk.CTk):
             except Exception as e:
                 print(f"Sound Error: {e}")
 
+        # 2. Restore Graphic
         if self.overlay:
             self.overlay.set_opacity(1.0)
+        
+        # 3. UNLOCK INPUTS (Allow new keys now)
         self.ping_timer = None
+        self.input_locked = False
 
     def trigger_action(self):
-        if self.ping_timer is not None:
-            self.after_cancel(self.ping_timer)
-        
+        # (This is just the main-thread scheduler)
         if self.overlay:
             self.overlay.set_opacity(0.1) 
-        
         self.ping_timer = self.after(1500, self.perform_ping)
 
     def listen_for_keys(self):
         valid_keys = [k for k in self.config["trigger_keys"] if k.strip()]
+        
         while self.is_running:
+            # --- PHASE 1: THE SPAM FILTER ---
+            # If we are already running a timer, DON'T even look for keys.
+            # This prevents the "Extended Timer" feel caused by queued events.
+            if self.input_locked:
+                time.sleep(0.05) 
+                continue 
+
+            # --- PHASE 2: CHECK KEYS ---
             for key in valid_keys:
                 if keyboard.is_pressed(key):
-                    self.trigger_action()
+                    # Lock immediately in this thread
+                    self.input_locked = True
+                    
+                    # Tell main thread to start the show
+                    self.after(0, self.trigger_action)
+                    
+                    # Debounce
                     while keyboard.is_pressed(key):
                         time.sleep(0.05)
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                     break
-            time.sleep(0.05)
+            
+            time.sleep(0.01)
 
     def on_close(self):
         self.is_running = False

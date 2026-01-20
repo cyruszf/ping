@@ -4,6 +4,6 @@ DEFAULT_CONFIG = {
     "sound_file": "",
     "pos_x": 500,
     "pos_y": 500,
-    "icon_scale": 1.0
+    "icon_scale": 3.0  # Default to "Native Size" (3.0 on slider)
 }
 CONFIG_FILE = "config.json"
