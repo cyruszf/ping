@@ -26,14 +26,14 @@ WINDOW_ICON   = "sheen.ico"
 class App(ctk.CTk):
     def __init__(self):
         try:
-            # v1.3: New ID for fresh cache
-            myappid = 'pingtool.overlay.game.release.v1.3' 
+            # v2.0: New ID for the Cooldown Update
+            myappid = 'pingtool.overlay.game.release.v2.0' 
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass
 
         super().__init__()
-        self.title("Ping Overlay Tool")
+        self.title("Sheen Companion App")
         self.geometry("400x550") 
         self.resizable(False, False)
 
@@ -52,17 +52,14 @@ class App(ctk.CTk):
         self.config = self.load_config()
         self.is_running = False
         self.ping_timer = None
-        
-        # NEW: A simplified lock for the background thread
         self.input_locked = False 
-        
         self.last_update = 0 
         
         if "icon_scale" not in self.config:
             self.config["icon_scale"] = 3.0
 
         # --- UI LAYOUT ---
-        ctk.CTkLabel(self, text="Ping Tool Settings", font=("Roboto", 20, "bold")).pack(pady=20)
+        ctk.CTkLabel(self, text="Settings", font=("Roboto", 20, "bold")).pack(pady=20)
 
         # 1. Trigger Keys
         frame_keys = ctk.CTkFrame(self)
@@ -208,12 +205,10 @@ class App(ctk.CTk):
             for entry in self.key_entries:
                 entry.configure(state="normal")
             keyboard.unhook_all()
-            # Restore visibility if stopped during cooldown
             if self.overlay: self.overlay.set_opacity(1.0)
             self.input_locked = False
 
     def perform_ping(self):
-        # 1. Play Sound
         if self.config["sound_file"] and os.path.exists(self.config["sound_file"]):
             try:
                 sound = pygame.mixer.Sound(self.config["sound_file"])
@@ -221,41 +216,36 @@ class App(ctk.CTk):
             except Exception as e:
                 print(f"Sound Error: {e}")
 
-        # 2. Restore Graphic
         if self.overlay:
             self.overlay.set_opacity(1.0)
         
-        # 3. UNLOCK INPUTS (Allow new keys now)
         self.ping_timer = None
         self.input_locked = False
 
     def trigger_action(self):
-        # (This is just the main-thread scheduler)
+        if self.ping_timer is not None:
+            return
+        
         if self.overlay:
-            self.overlay.set_opacity(0.1) 
+            # 1. Dim the icon
+            self.overlay.set_opacity(0.3) 
+            # 2. START ANIMATION (1500ms = 1.5s)
+            self.overlay.start_cooldown_animation(1500)
+        
         self.ping_timer = self.after(1500, self.perform_ping)
 
     def listen_for_keys(self):
         valid_keys = [k for k in self.config["trigger_keys"] if k.strip()]
         
         while self.is_running:
-            # --- PHASE 1: THE SPAM FILTER ---
-            # If we are already running a timer, DON'T even look for keys.
-            # This prevents the "Extended Timer" feel caused by queued events.
             if self.input_locked:
                 time.sleep(0.05) 
                 continue 
 
-            # --- PHASE 2: CHECK KEYS ---
             for key in valid_keys:
                 if keyboard.is_pressed(key):
-                    # Lock immediately in this thread
                     self.input_locked = True
-                    
-                    # Tell main thread to start the show
                     self.after(0, self.trigger_action)
-                    
-                    # Debounce
                     while keyboard.is_pressed(key):
                         time.sleep(0.05)
                     time.sleep(0.05)
