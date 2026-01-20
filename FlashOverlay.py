@@ -1,38 +1,42 @@
 import tkinter as tk
 
-class FlashOverlay:
-    def __init__(self, x, y, image_path):
-        self.root = tk.Toplevel()
-        self.root.overrideredirect(True)  # Remove borders
-        self.root.attributes("-topmost", True)  # Stay on top
-        self.root.attributes("-alpha", 1.0)  # Opacity
 
-        # Keep it from stealing focus from the game
+class FlashOverlay:
+    def __init__(self, image_path):  # We only need the path once
+        self.root = tk.Toplevel()
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.attributes("-alpha", 1.0)
         self.root.wm_attributes("-transparentcolor", "white")
 
+        # Load image once
         try:
-            # Load and resize image to be visible but not huge
             self.img = tk.PhotoImage(file=image_path)
-            # You might want to resize if the image is huge,
-            # but Tkinter PhotoImage scaling is tricky.
-            # Best to provide a 200x200 png.
+            self.width = self.img.width()
+            self.height = self.img.height()
         except:
-            # Fallback red square if no image found
             self.img = None
+            self.width = 100
+            self.height = 100
 
         if self.img:
             lbl = tk.Label(self.root, image=self.img, bg='white')
             lbl.pack()
-            # Center the window on the coordinate
-            w = self.img.width()
-            h = self.img.height()
-            self.root.geometry(f"{w}x{h}+{int(x - w / 2)}+{int(y - h / 2)}")
         else:
             lbl = tk.Label(self.root, text="PING", bg='red', fg='white', font=("Arial", 20))
             lbl.pack()
-            self.root.geometry(f"100x100+{int(x - 50)}+{int(y - 50)}")
 
-        # Auto destroy after 500ms
-        self.root.after(500, self.root.destroy)
-        # Ensure it draws immediately
-        self.root.update()
+        # Hide immediately after creation
+        self.root.withdraw()
+
+    def flash(self, x, y):
+        # 1. Move to new position
+        new_x = int(x - self.width / 2)
+        new_y = int(y - self.height / 2)
+        self.root.geometry(f"{self.width}x{self.height}+{new_x}+{new_y}")
+
+        # 2. Show
+        self.root.deiconify()
+
+        # 3. Schedule Hide (not destroy)
+        self.root.after(500, self.root.withdraw)

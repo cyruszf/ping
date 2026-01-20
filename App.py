@@ -22,6 +22,7 @@ class App(ctk.CTk):
         self.config = self.load_config()
         self.is_running = False
         self.listener_thread = None
+        self.ping_timer = None
 
         # --- UI LAYOUT ---
         ctk.CTkLabel(self, text="Ping Tool Settings", font=("Roboto", 20, "bold")).pack(pady=20)
@@ -68,6 +69,7 @@ class App(ctk.CTk):
         self.btn_start.pack(pady=20, fill="x", padx=20)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.overlay = FlashOverlay(self.config["flash_image"])
 
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
@@ -139,7 +141,7 @@ class App(ctk.CTk):
             self.entry_key.configure(state="normal")
             keyboard.unhook_all()
 
-    def trigger_action(self):
+    def perform_ping(self):
         # 1. Play Sound (Non-blocking)
         if self.config["sound_file"] and os.path.exists(self.config["sound_file"]):
             try:
@@ -153,9 +155,16 @@ class App(ctk.CTk):
         # The safest way is to schedule it on the main loop, but for a simple overlay,
         # firing a temporary Toplevel usually works okay.
         try:
-            FlashOverlay(self.config["pos_x"], self.config["pos_y"], self.config["flash_image"])
+            self.overlay.flash(self.config["pos_x"], self.config["pos_y"])
         except Exception as e:
             print(f"Graphic Error: {e}")
+
+    def trigger_action(self):
+        if self.ping_timer is not None:
+            return
+        else:
+
+
 
     def listen_for_keys(self):
         key = self.config["trigger_key"]
