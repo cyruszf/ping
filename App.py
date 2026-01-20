@@ -228,7 +228,7 @@ class App(ctk.CTk):
         
         if self.overlay:
             # 1. Dim the icon
-            self.overlay.set_opacity(0.3) 
+            self.overlay.set_opacity(0.7) 
             # 2. START ANIMATION (1500ms = 1.5s)
             self.overlay.start_cooldown_animation(1500)
         

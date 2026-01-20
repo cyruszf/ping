@@ -1,18 +1,28 @@
 import tkinter as tk
-from PIL import Image, ImageTk, ImageDraw, ImageOps
+from PIL import Image, ImageTk, ImageDraw, ImageOps, ImageEnhance
 import ctypes
 import time
 import os
 import threading
+import sys
+
+# --- FIX FOR SINGLE FILE EXE ---
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class FlashOverlay:
     def __init__(self, image_path, scale=1.0): 
         self.root = tk.Toplevel()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.attributes("-alpha", 1.0)
         
-        # Transparent Window Setup
+        # FORCE 100% OPACITY ALWAYS
+        self.root.attributes("-alpha", 1.0) 
+        
         self.transparent_key = "#000001"
         self.root.wm_attributes("-transparentcolor", self.transparent_key)
         self.root.configure(bg=self.transparent_key)
@@ -21,30 +31,25 @@ class FlashOverlay:
         self.canvas.pack()
         self.image_item = None
         
-        # --- LOAD ASSETS ---
         self.icon_pil = None
         self.frame_pil = None
         
         try:
-            self.icon_pil = Image.open(image_path).convert("RGBA")
-            print(f"[OK] Icon loaded.")
+            self.icon_pil = Image.open(resource_path(image_path)).convert("RGBA")
         except Exception as e:
-            print(f"[ERROR] Icon failed: {e}")
+            print(f"Error loading icon: {e}")
 
-        if os.path.exists("frame.png"):
+        if os.path.exists(resource_path("frame.png")):
             try:
-                self.frame_pil = Image.open("frame.png").convert("RGBA")
-                print("[OK] frame.png loaded.")
+                self.frame_pil = Image.open(resource_path("frame.png")).convert("RGBA")
             except:
                 pass
         
-        # Animation Cache
-        self.tk_frames = []         # Final Images ready for screen
-        self.pil_frames = []        # Raw data from thread
+        self.tk_frames = []        
+        self.pil_frames = []       
         self.anim_job = None
         self.is_ready = False
         
-        # Initial Draw
         if self.icon_pil:
             self.resize_graphic(scale)
 
@@ -52,8 +57,6 @@ class FlashOverlay:
 
     def resize_graphic(self, scale):
         if not self.icon_pil: return
-        
-        # 1. Dimensions
         w = int(self.icon_pil.width * scale)
         h = int(self.icon_pil.height * scale)
         if w < 1: w = 1
@@ -61,21 +64,21 @@ class FlashOverlay:
         self.width, self.height = w, h
         self.canvas.config(width=w, height=h)
         
-        # 2. Prepare Layers
-        # Layer A: Bright Color (Foreground)
         self.base_color = self.icon_pil.resize((w, h), Image.Resampling.LANCZOS)
         
-        # Layer B: Black & White (Background)
+        # --- MAKE THE COOLDOWN BRIGHTER ---
+        # Instead of dark gray, we make it a bright gray so it feels solid
         gray_temp = ImageOps.grayscale(self.base_color).convert("RGBA")
+        enhancer = ImageEnhance.Brightness(gray_temp)
+        gray_temp = enhancer.enhance(1.5) # 50% Brighter
         gray_temp.putalpha(self.base_color.getchannel("A"))
         self.base_bw = gray_temp
+        # ----------------------------------
         
-        # Layer C: Frame (Top)
         self.base_frame = None
         if self.frame_pil:
             self.base_frame = self.frame_pil.resize((w, h), Image.Resampling.LANCZOS)
 
-        # 3. Show Static "Ready" Image Immediately
         ready_comp = self.base_color.copy()
         if self.base_frame:
             ready_comp = Image.alpha_composite(ready_comp, self.base_frame)
@@ -89,69 +92,49 @@ class FlashOverlay:
         
         self.root.update()
 
-        # 4. Start Heavy Processing in Thread
         self.is_ready = False
-        self.pil_frames = [] # Clear old cache
+        self.pil_frames = []
         threading.Thread(target=self.generate_raw_frames, daemon=True).start()
-        
-        # 5. Start Polling for results
         self.check_thread_completion()
 
     def generate_raw_frames(self):
-        """ THREAD: Generates pure PIL images (Heavy Math) """
-        print("Thread: Generating 60 frames...")
         frames = []
         total_frames = 60
-
         for i in range(total_frames):
             pct = i / (total_frames - 1)
-            
-            # Start with Black & White
             frame = self.base_bw.copy()
             
-            # Create Wipe Mask
             mask = Image.new("L", (self.width, self.height), 0)
             draw = ImageDraw.Draw(mask)
             end_angle = -90 + (360 * pct)
             bbox = [-10, -10, self.width+10, self.height+10]
             draw.pieslice(bbox, start=-90, end=end_angle, fill=255)
             
-            # Paste Color
             frame.paste(self.base_color, (0, 0), mask=mask)
             
-            # Paste Frame
             if self.base_frame:
                 frame = Image.alpha_composite(frame, self.base_frame)
             
-            # Store raw image
             frames.append(frame)
-
-        # Send to main thread
         self.pil_frames = frames
 
     def check_thread_completion(self):
-        """ MAIN THREAD: Checks if raw frames are ready and converts them """
         if self.pil_frames:
-            # Thread finished! Convert to Tkinter images now.
-            # This is fast, but must happen on Main Thread.
-            print("Main: Converting frames to graphics...")
             self.tk_frames = [self.convert_to_tk(img) for img in self.pil_frames]
             self.is_ready = True
-            print("Main: Animation Ready.")
         else:
-            # Check again in 100ms
             self.root.after(100, self.check_thread_completion)
 
     def convert_to_tk(self, pil_img):
-        """ Helper to convert PIL -> PhotoImage safely """
         bg_img = Image.new("RGBA", pil_img.size, self.transparent_key + "FF") 
         bg_img.paste(pil_img, (0, 0), mask=pil_img)
         return ImageTk.PhotoImage(bg_img.convert("RGB"))
 
     def start_cooldown_animation(self, duration_ms):
-        # Fallback if animation not ready
+        # --- HERE IS THE FIX ---
+        # Even if animation is loading, STAY 100% SOLID
         if not self.is_ready or not self.tk_frames:
-            self.set_opacity(0.7)
+            self.set_opacity(1.0)  # Forced Solid
             self.root.after(duration_ms, lambda: self.set_opacity(1.0))
             return
 
